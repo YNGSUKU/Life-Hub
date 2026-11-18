@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Life-Hub</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Life-Hub">
+<meta name="theme-color" content="#14181B">
+<style>
+:root{--bg:#EEF0EC;--card:#fff;--text:#14181B;--muted:#5B6468;--line:#D9DDD7;--accent:#0E6E55;--on-accent:#fff;--danger:#C7302A;--signal:#F4C430;--nav:#14181B;--nav-muted:#9AA4A7;--soft:#E3F1EC}
+@media (prefers-color-scheme:dark){:root{--bg:#0F1213;--card:#191E20;--text:#E9ECE7;--muted:#97A1A4;--line:#2A3133;--accent:#3DBB91;--on-accent:#0F1213;--danger:#F06A5F;--soft:#17302A;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) calc(96px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+h1{font-size:28px;margin:0 0 4px;letter-spacing:-.5px}.sub{color:var(--muted);margin-bottom:16px}
+h2{font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin:0 0 8px;font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+button,input,select{font:inherit;color:inherit}
+input,select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0;font-size:16px}
+button{border:1px solid var(--line);background:transparent;border-radius:10px;padding:8px 12px;cursor:pointer}
+button.b{background:var(--accent);color:var(--on-accent);border:0;font-weight:600}
+button.x{color:var(--danger)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.muted{color:var(--muted)}.small{font-size:13px}
+.item{border-top:1px solid var(--line);padding:10px 0}.item:first-child{border-top:0}
+.item .t{font-weight:600;word-break:break-word}.item.read .t{font-weight:400}
+.pill{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--line);margin-right:6px}
+.pill.imp{background:var(--signal);color:#14181B}
+.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;gap:4px;background:var(--nav);padding:8px max(8px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));z-index:10}
+.tabs button{flex:1;border:0;color:var(--nav-muted);padding:10px 4px;border-radius:14px;position:relative}
+.tabs button.on{background:var(--signal);color:#14181B;font-weight:700}
+.badge{position:absolute;top:2px;right:8px;background:var(--danger);color:#fff;font-size:11px;border-radius:999px;padding:0 6px}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));background:var(--text);color:var(--bg);padding:10px 14px;border-radius:10px;z-index:20;max-width:90vw;display:flex;gap:12px;align-items:center}
+#toast button{border:0;background:transparent;color:var(--signal);font-weight:700;padding:0}
+[hidden]{display:none!important}
+.seg{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}.seg button.on{background:var(--soft);border-color:var(--accent);font-weight:600}
+.err{color:var(--danger);margin:8px 0}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<div id="toast" hidden></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = "https://kyiifhaxkppysksjlafl.supabase.co";
+const SUPABASE_KEY = "sb_publishable_vPycIr58nPLyUNFkDMxrMw_PI697SiS";
+const $ = (s, r = document) => r.querySelector(s);
+const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === "class") e.className = v; else if (k.startsWith("on")) e[k] = v; else if (v !== null && v !== undefined && v !== false) e.setAttribute(k, v === true ? "" : v); } kids.flat().forEach(c => { if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(c)); }); return e; };
+const iso = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+let user = null, tasks = [], notifs = [], rules = [], tab = "notifs", nview = "todo", tview = "open", status = "";
+const CATS = ["Personnel", "Professionnel", "Administratif", "Financier", "Logement", "Courses", "Santé et rendez-vous", "Projets"];
+const DEFAULT_RULES = [
+  { key: "tasks.overdue", label: "Tâches en retard", category: "Tâches" },
+  { key: "tasks.today", label: "Tâches à faire aujourd'hui", category: "Tâches" }
+];
+
+function toast(msg, undo) {
+  const t = $("#toast"); t.hidden = false; t.replaceChildren(msg);
+  if (undo) t.append(el("button", { onclick: () => { t.hidden = true; undo(); } }, "Annuler"));
+  clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, 6000);
+}
+async function must(p) { const r = await p; if (r.error) { toast("Erreur : " + r.error.message); throw r.error; } return r.data; }
+
+/* ---------- Connexion ---------- */
+function renderAuth(msg) {
+  const email = el("input", { type: "email", placeholder: "E-mail", autocomplete: "email" });
+  const pw = el("input", { type: "password", placeholder: "Mot de passe (8 caractères minimum)", autocomplete: "current-password" });
+  const out = el("div", { class: "err" }, msg || "");
+  const go = async mode => {
+    out.textContent = "";
+    const f = mode === "in" ? sb.auth.signInWithPassword({ email: email.value.trim(), password: pw.value }) : sb.auth.signUp({ email: email.value.trim(), password: pw.value });
+    const { data, error } = await f;
+    if (error) { out.textContent = error.message; return; }
+    if (mode === "up" && !data.session) { out.className = "muted"; out.textContent = "Compte créé. Si Supabase demande une confirmation, cliquez sur le lien reçu par e-mail, puis connectez-vous ici."; }
+  };
+  $("#app").replaceChildren(el("h1", {}, "Life-Hub"), el("div", { class: "sub" }, "Connexion à votre espace personnel"),
+    el("div", { class: "card" }, el("div", { class: "row", style: "flex-direction:column;align-items:stretch" }, email, pw,
+      el("div", { class: "row" }, el("button", { class: "b", onclick: () => go("in") }, "Se connecter"), el("button", { onclick: () => go("up") }, "Créer mon compte")), out)));
+}
+
+/* ---------- Données ---------- */
+async function loadAll() {
+  [tasks, notifs, rules] = await Promise.all([
+    must(sb.from("tasks").select("*").is("deleted_at", null).order("created_at", { ascending: false })),
+    must(sb.from("notifications").select("*").order("created_at", { ascending: false })),
+    must(sb.from("notif_rules").select("*").order("key"))
+  ]);
+  for (const d of DEFAULT_RULES) if (!rules.some(r => r.key === d.key)) { await must(sb.from("notif_rules").upsert({ ...d, user_id: user.id }, { onConflict: "user_id,key", ignoreDuplicates: true })); }
+  if (rules.length < DEFAULT_RULES.length) rules = await must(sb.from("notif_rules").select("*").order("key"));
+  await generate(); render();
+}
+const rule = k => rules.find(r => r.key === k);
+const ruleOn = k => { const r = rule(k); return !!r && r.enabled && r.mode !== "off"; };
+
+// Génération réelle : une notification par tâche et par échéance. Une notification supprimée (statut « deleted ») n'est jamais recréée : sa clé reste en base.
+async function generate() {
+  const today = iso(new Date()), rows = [];
+  for (const t of tasks) {
+    if (t.status === "done" || !t.due) continue;
+    if (t.due < today && ruleOn("tasks.overdue")) rows.push({ user_id: user.id, rule_key: "tasks.overdue", category: "Tâches", title: "En retard : " + t.title, body: "Échéance du " + t.due, dedupe_key: "overdue:" + t.id + ":" + t.due });
+    if (t.due === today && ruleOn("tasks.today")) rows.push({ user_id: user.id, rule_key: "tasks.today", category: "Tâches", title: "Aujourd'hui : " + t.title, body: null, dedupe_key: "today:" + t.id + ":" + t.due });
+  }
+  const fresh = rows.filter(r => !notifs.some(n => n.dedupe_key === r.dedupe_key));
+  if (fresh.length) { await must(sb.from("notifications").upsert(fresh, { onConflict: "user_id,dedupe_key", ignoreDuplicates: true })); notifs = await must(sb.from("notifications").select("*").order("created_at", { ascending: false })); }
+}
+const visible = n => n.status !== "deleted" && n.status !== "hidden" && !(n.status === "snoozed" && new Date(n.snooze_until) > new Date());
+const pending = () => notifs.filter(visible);
+
+/* ---------- Notifications ---------- */
+async function setN(n, patch, msg, undoPatch) {
+  const prev = {}; Object.keys(patch).forEach(k => prev[k] = n[k]);
+  await must(sb.from("notifications").update(patch).eq("id", n.id)); Object.assign(n, patch); render();
+  if (msg) toast(msg, () => setN(n, undoPatch || prev));
+}
+function snoozeMenu(n) {
+  const at = d => d.toISOString();
+  const evening = new Date(); evening.setHours(18, 0, 0, 0); if (evening <= new Date()) evening.setDate(evening.getDate() + 1);
+  const tom = new Date(); tom.setDate(tom.getDate() + 1); tom.setHours(9, 0, 0, 0);
+  const dt = el("input", { type: "datetime-local" });
+  const opt = (l, d) => el("button", { onclick: () => setN(n, { status: "snoozed", snooze_until: at(d) }, "Reportée : " + l) }, l);
+  return el("div", { class: "row", style: "margin-top:8px" }, opt("dans 15 min", new Date(Date.now() + 15 * 60000)), opt("dans 1 h", new Date(Date.now() + 3600000)), opt("ce soir", evening), opt("demain", tom), dt,
+    el("button", { onclick: () => { if (dt.value) setN(n, { status: "snoozed", snooze_until: new Date(dt.value).toISOString() }, "Reportée"); } }, "Choisir cette date"));
+}
+function notifItem(n) {
+  const box = el("div", { class: "item" + (n.status === "read" ? " read" : "") });
+  const menu = el("div", { hidden: true });
+  box.append(el("div", { class: "t" }, n.title), el("div", { class: "small muted" }, el("span", { class: "pill" }, n.category), n.important ? el("span", { class: "pill imp" }, "Important") : null, n.body || "", n.status === "snoozed" ? " · reportée" : ""));
+  const row = el("div", { class: "row", style: "margin-top:8px" });
+  if (nview === "hidden") row.append(el("button", { onclick: () => setN(n, { status: "new" }) }, "Réafficher"));
+  else {
+    row.append(
+      n.status === "read" ? null : el("button", { onclick: () => setN(n, { status: "read" }) }, "Lu"),
+      el("button", { onclick: () => setN(n, { important: !n.important }) }, n.important ? "Pas important" : "Important"),
+      el("button", { onclick: () => { menu.hidden = !menu.hidden; } }, "Reporter"),
+      el("button", { onclick: async () => { await must(sb.from("tasks").insert({ title: n.title.replace(/^(En retard|Aujourd'hui) : /, ""), category: "Personnel" })); await setN(n, { status: "deleted" }); await refreshTasks(); toast("Tâche créée"); } }, "→ Tâche"),
+      el("button", { onclick: () => setN(n, { status: "hidden" }, "Masquée") }, "Masquer"),
+      el("button", { class: "x", onclick: () => setN(n, { status: "deleted" }, "Supprimée") }, "Supprimer"),
+      rule(n.rule_key) ? el("button", { class: "x", onclick: async () => { await setRule(rule(n.rule_key), { enabled: false }); await setN(n, { status: "deleted" }); toast("Règle désactivée : « " + rule(n.rule_key).label + " »"); } }, "Désactiver cette règle") : null);
+    menu.append(snoozeMenu(n));
+  }
+  box.append(row, menu); return box;
+}
+function viewNotifs() {
+  const list = nview === "todo" ? pending() : nview === "snoozed" ? notifs.filter(n => n.status === "snoozed" && new Date(n.snooze_until) > new Date()) : notifs.filter(n => n.status === "hidden");
+  const seg = el("div", { class: "seg" }, ...[["todo", "À traiter"], ["snoozed", "Reportées"], ["hidden", "Masquées"]].map(([k, l]) => el("button", { class: nview === k ? "on" : "", onclick: () => { nview = k; render(); } }, l)));
+  const tools = el("div", { class: "row", style: "margin-bottom:12px" }, nview === "todo" && list.length ? el("button", { onclick: async () => { await must(sb.from("notifications").update({ status: "read" }).in("id", list.map(n => n.id))); list.forEach(n => n.status = "read"); render(); } }, "Tout marquer comme lu") : null);
+  return [el("h1", {}, "Notifications"), el("div", { class: "sub" }, "Générées par Life-Hub, à partir de vos tâches. Rien n'est simulé."), seg, tools,
+    el("div", { class: "card" }, list.length ? list.map(notifItem) : el("div", { class: "muted" }, nview === "todo" ? "Rien à traiter." : "Aucune."))];
+}
+
+/* ---------- Tâches ---------- */
+async function refreshTasks() { tasks = await must(sb.from("tasks").select("*").is("deleted_at", null).order("created_at", { ascending: false })); await generate(); render(); }
+async function setTask(t, patch, msg, undoPatch) {
+  const prev = {}; Object.keys(patch).forEach(k => prev[k] = t[k]);
+  await must(sb.from("tasks").update(patch).eq("id", t.id));
+  if (patch.status === "done" || patch.deleted_at) await must(sb.from("notifications").update({ status: "deleted" }).like("dedupe_key", "%:" + t.id + ":%"));
+  notifs = await must(sb.from("notifications").select("*").order("created_at", { ascending: false }));
+  await refreshTasks();
+  if (msg) toast(msg, async () => { await setTask(t, undoPatch || prev); });
+}
+function viewTasks() {
+  const title = el("input", { placeholder: "Nouvelle tâche…", style: "flex:1;min-width:140px" }), due = el("input", { type: "date" });
+  const cat = el("select", {}, CATS.map(c => el("option", {}, c))), prio = el("select", {}, [[1, "Priorité haute"], [2, "Priorité normale"], [3, "Priorité basse"]].map(([v, l]) => el("option", { value: v, selected: v === 2 }, l)));
+  const add = async () => { const v = title.value.trim(); if (!v) return; await must(sb.from("tasks").insert({ title: v, due: due.value || null, category: cat.value, priority: +prio.value })); title.value = ""; due.value = ""; await refreshTasks(); };
+  const today = iso(new Date());
+  const f = { open: t => t.status !== "done", waiting: t => t.status === "waiting", late: t => t.status !== "done" && t.due && t.due < today, nodate: t => t.status !== "done" && !t.due, done: t => t.status === "done" }[tview];
+  const seg = el("div", { class: "seg" }, ...[["open", "Ouvertes"], ["late", "En retard"], ["waiting", "En attente"], ["nodate", "Sans date"], ["done", "Terminées"]].map(([k, l]) => el("button", { class: tview === k ? "on" : "", onclick: () => { tview = k; render(); } }, l)));
+  const list = tasks.filter(f).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || a.priority - b.priority);
+  return [el("h1", {}, "Tâches"), el("div", { class: "sub" }, "Synchronisées entre vos appareils"),
+    el("div", { class: "card" }, el("div", { class: "row" }, title, due, cat, prio, el("button", { class: "b", onclick: add }, "Ajouter"))), seg,
+    el("div", { class: "card" }, list.length ? list.map(t => el("div", { class: "item" }, el("div", { class: "t" }, t.title),
+      el("div", { class: "small muted" }, el("span", { class: "pill" }, t.category), t.priority === 1 ? el("span", { class: "pill imp" }, "Haute") : null, t.due ? "Échéance " + t.due : "Sans date", t.status === "waiting" ? " · en attente" : ""),
+      el("div", { class: "row", style: "margin-top:8px" },
+        t.status === "done" ? el("button", { onclick: () => setTask(t, { status: "todo" }) }, "Rouvrir") : el("button", { class: "b", onclick: () => setTask(t, { status: "done" }, "Tâche terminée") }, "Terminée"),
+        t.status === "waiting" ? el("button", { onclick: () => setTask(t, { status: "todo" }) }, "Plus en attente") : t.status === "todo" ? el("button", { onclick: () => setTask(t, { status: "waiting" }) }, "En attente d'une réponse") : null,
+        el("button", { class: "x", onclick: () => setTask(t, { deleted_at: new Date().toISOString() }, "Tâche supprimée", { deleted_at: null }) }, "Supprimer")))) : el("div", { class: "muted" }, "Aucune tâche ici."))];
+}
+
+/* ---------- Réglages ---------- */
+async function setRule(r, patch) { await must(sb.from("notif_rules").update(patch).eq("key", r.key)); Object.assign(r, patch); render(); }
+function viewSettings() {
+  const modes = [["immediate", "Immédiate"], ["daily", "Résumé quotidien"], ["weekly", "Résumé hebdomadaire"], ["off", "Aucune"]];
+  const rs = rules.map(r => el("div", { class: "item" }, el("div", { class: "t" }, r.label, el("span", { class: "pill", style: "margin-left:8px" }, r.category)),
+    el("div", { class: "row", style: "margin-top:8px" },
+      el("select", { onchange: e => setRule(r, { mode: e.target.value }) }, modes.map(([v, l]) => el("option", { value: v, selected: r.mode === v }, l))),
+      el("button", { onclick: () => setRule(r, { enabled: !r.enabled }) }, r.enabled ? "Désactiver la règle" : "Réactiver la règle"))));
+  const exp = async () => {
+    const [t, n, r, a] = await Promise.all([sb.from("tasks").select("*"), sb.from("notifications").select("*"), sb.from("notif_rules").select("*"), sb.from("audit_log").select("*").order("at", { ascending: false }).limit(200)]);
+    const txt = JSON.stringify({ app: "life-hub", version: 1, date: new Date().toISOString(), tasks: t.data, notifications: n.data, rules: r.data, history: a.data }, null, 1);
+    try { await navigator.clipboard.writeText(txt); toast("Sauvegarde copiée dans le presse-papiers"); } catch (e) { const ta = el("textarea", { style: "width:100%;height:160px" }); ta.value = txt; $("#bk").replaceChildren(ta); ta.select(); toast("Copie automatique impossible : sélectionnez le texte."); }
+  };
+  return [el("h1", {}, "Réglages"), el("div", { class: "sub" }, user.email),
+    el("div", { class: "card" }, el("h2", {}, "Règles de notification"), rs.length ? rs : el("div", { class: "muted" }, "Aucune règle."),
+      el("div", { class: "small muted", style: "margin-top:8px" }, "Les modes « résumé » et le push sur téléphone arrivent à l'étape suivante : pour l'instant, le mode « Aucune » ou une règle désactivée arrête bien la création de notifications."),
+      el("div", { class: "row", style: "margin-top:10px" },
+        el("button", { class: "x", onclick: async () => { await must(sb.from("notif_rules").update({ enabled: false }).eq("user_id", user.id)); rules.forEach(r => r.enabled = false); render(); toast("Toutes les règles sont désactivées"); } }, "Tout désactiver"),
+        el("button", { onclick: async () => { await must(sb.from("notif_rules").update({ enabled: true, mode: "immediate" }).eq("user_id", user.id)); rules.forEach(r => { r.enabled = true; r.mode = "immediate"; }); await generate(); render(); toast("Préférences réinitialisées"); } }, "Réinitialiser mes préférences"))),
+    el("div", { class: "card" }, el("h2", {}, "Sauvegarde"), el("div", { class: "muted small" }, "Vos données sont dans la base Supabase. Cet export copie tâches, notifications, règles et historique des modifications."), el("div", { class: "row", style: "margin-top:8px" }, el("button", { onclick: exp }, "Copier une sauvegarde")), el("div", { id: "bk" })),
+    el("div", { class: "card" }, el("button", { onclick: async () => { await sb.auth.signOut(); } }, "Se déconnecter"))];
+}
+
+/* ---------- Affichage ---------- */
+function render() {
+  if (!user) return;
+  const nb = pending().filter(n => n.status === "new").length;
+  const bar = el("div", { class: "tabs" }, ...[["notifs", "Notifications"], ["tasks", "Tâches"], ["settings", "Réglages"]].map(([k, l]) => el("button", { class: tab === k ? "on" : "", onclick: () => { tab = k; render(); window.scrollTo(0, 0); } }, l, k === "notifs" && nb ? el("span", { class: "badge" }, nb) : null)));
+  const ae = document.activeElement, keep = ae && ae.tagName === "INPUT" ? null : 0; // pas de réaffichage pendant la saisie
+  $("#app").replaceChildren(...({ notifs: viewNotifs, tasks: viewTasks, settings: viewSettings }[tab])());
+  document.querySelector(".tabs")?.remove(); document.body.append(bar);
+}
+function showAuth(m) { document.querySelector(".tabs")?.remove(); renderAuth(m); }
+
+sb.auth.onAuthStateChange(async (ev, session) => {
+  if (!session) { user = null; showAuth(); return; }
+  if (user && user.id === session.user.id) return;
+  user = session.user; $("#app").replaceChildren(el("div", { class: "muted" }, "Chargement…"));
+  try { await loadAll(); subscribe(); } catch (e) { $("#app").replaceChildren(el("div", { class: "err" }, "Impossible de charger les données : " + (e.message || e), el("div", { class: "small muted" }, "Vérifiez que le schéma SQL a bien été exécuté dans Supabase.")), el("button", { onclick: () => location.reload() }, "Réessayer")); }
+});
+let chan = null;
+function subscribe() {
+  if (chan) sb.removeChannel(chan);
+  let t = null; const later = () => { clearTimeout(t); t = setTimeout(async () => { const a = document.activeElement; if (a && ["INPUT", "SELECT"].includes(a.tagName)) return later(); try { await loadAll(); } catch (e) {} }, 400); };
+  chan = sb.channel("hub").on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, later).on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, later).on("postgres_changes", { event: "*", schema: "public", table: "notif_rules" }, later).subscribe();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && user) loadAll().catch(() => {}); });
+setInterval(() => { if (user && !document.hidden) { const a = document.activeElement; if (!a || !["INPUT", "SELECT"].includes(a.tagName)) loadAll().catch(() => {}); } }, 60000);
+</script>
+</body>
+</html>
