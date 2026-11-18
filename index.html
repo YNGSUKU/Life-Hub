@@ -217,12 +217,16 @@ function render() {
 }
 function showAuth(m) { document.querySelector(".tabs")?.remove(); renderAuth(m); }
 
-sb.auth.onAuthStateChange(async (ev, session) => {
+// Important : ne jamais appeler Supabase directement dans ce rappel (blocage connu de supabase-js) ; on décale le travail.
+sb.auth.onAuthStateChange((ev, session) => { setTimeout(() => onSession(session), 0); });
+async function onSession(session) {
   if (!session) { user = null; showAuth(); return; }
   if (user && user.id === session.user.id) return;
   user = session.user; $("#app").replaceChildren(el("div", { class: "muted" }, "Chargement…"));
-  try { await loadAll(); subscribe(); } catch (e) { $("#app").replaceChildren(el("div", { class: "err" }, "Impossible de charger les données : " + (e.message || e), el("div", { class: "small muted" }, "Vérifiez que le schéma SQL a bien été exécuté dans Supabase.")), el("button", { onclick: () => location.reload() }, "Réessayer")); }
-});
+  const slow = setTimeout(() => { $("#app").replaceChildren(el("div", { class: "err" }, "Le chargement est anormalement long. Vérifiez votre connexion, puis réessayez."), el("button", { onclick: () => location.reload() }, "Réessayer")); }, 15000);
+  try { await loadAll(); clearTimeout(slow); subscribe(); }
+  catch (e) { clearTimeout(slow); $("#app").replaceChildren(el("div", { class: "err" }, "Impossible de charger les données : " + (e && (e.message || e.details) || e), el("div", { class: "small muted" }, "Si le message parle d'une table introuvable, le schéma SQL n'a pas été exécuté dans Supabase.")), el("button", { onclick: () => location.reload() }, "Réessayer")); }
+}
 let chan = null;
 function subscribe() {
   if (chan) sb.removeChannel(chan);
