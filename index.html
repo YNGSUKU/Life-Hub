@@ -47,6 +47,7 @@ button.x{color:var(--danger)}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>
 const SUPABASE_URL = "https://kyiifhaxkppysksjlafl.supabase.co";
+const VAPID_PUBLIC = "BIE7d2NmjRr96CNXyGfBHlz2c_54CbDUaDnpluxZ8DD39nLiuvf-erGSiG1f7xWTMYa6PXl4QHoGqzfzRZk-_TM";
 const SUPABASE_KEY = "sb_publishable_vPycIr58nPLyUNFkDMxrMw_PI697SiS";
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === "class") e.className = v; else if (k.startsWith("on")) e[k] = v; else if (v !== null && v !== undefined && v !== false) e.setAttribute(k, v === true ? "" : v); } kids.flat().forEach(c => { if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(c)); }); return e; };
@@ -101,11 +102,11 @@ const ruleOn = k => { const r = rule(k); return !!r && r.enabled && r.mode !== "
 
 // Génération réelle : une notification par tâche et par échéance. Une notification supprimée (statut « deleted ») n'est jamais recréée : sa clé reste en base.
 async function generate() {
-  const today = iso(new Date()), rows = [];
+  const today = iso(new Date()), rows = [], seen = new Date().toISOString();
   for (const t of tasks) {
     if (t.status === "done" || !t.due) continue;
-    if (t.due < today && ruleOn("tasks.overdue")) rows.push({ user_id: user.id, rule_key: "tasks.overdue", category: "Tâches", title: "En retard : " + t.title, body: "Échéance du " + t.due, dedupe_key: "overdue:" + t.id + ":" + t.due });
-    if (t.due === today && ruleOn("tasks.today")) rows.push({ user_id: user.id, rule_key: "tasks.today", category: "Tâches", title: "Aujourd'hui : " + t.title, body: null, dedupe_key: "today:" + t.id + ":" + t.due });
+    if (t.due < today && ruleOn("tasks.overdue")) rows.push({ user_id: user.id, rule_key: "tasks.overdue", category: "Tâches", title: "En retard : " + t.title, body: "Échéance du " + t.due, dedupe_key: "overdue:" + t.id + ":" + t.due, pushed_at: seen });
+    if (t.due === today && ruleOn("tasks.today")) rows.push({ user_id: user.id, rule_key: "tasks.today", category: "Tâches", title: "Aujourd'hui : " + t.title, body: null, dedupe_key: "today:" + t.id + ":" + t.due, pushed_at: seen });
   }
   const fresh = rows.filter(r => !notifs.some(n => n.dedupe_key === r.dedupe_key));
   if (fresh.length) { await must(sb.from("notifications").upsert(fresh, { onConflict: "user_id,dedupe_key", ignoreDuplicates: true })); notifs = await must(sb.from("notifications").select("*").order("created_at", { ascending: false })); }
@@ -183,6 +184,49 @@ function viewTasks() {
         el("button", { class: "x", onclick: () => setTask(t, { deleted_at: new Date().toISOString() }, "Tâche supprimée", { deleted_at: null }) }, "Supprimer")))) : el("div", { class: "muted" }, "Aucune tâche ici."))];
 }
 
+
+/* ---------- Push ---------- */
+const b64u = s => { const p = "=".repeat((4 - s.length % 4) % 4), r = atob((s + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from([...r].map(c => c.charCodeAt(0))); };
+const standalone = () => window.navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+async function pushState() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return { ok: false, why: /iPhone|iPad/.test(navigator.userAgent) && !standalone() ? "Sur iPhone, installez d'abord l'appli sur l'écran d'accueil (Partager > Sur l'écran d'accueil), puis ouvrez-la depuis l'icône." : "Ce navigateur ne gère pas les notifications push." };
+  const reg = await navigator.serviceWorker.ready.catch(() => null);
+  const sub = reg ? await reg.pushManager.getSubscription() : null;
+  return { ok: true, perm: Notification.permission, sub, reg };
+}
+async function enablePush() {
+  const st = await pushState(); if (!st.ok) { toast(st.why); return; }
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { toast("Autorisation refusée. Vous pouvez la rétablir dans les réglages de l'iPhone > Notifications > Life-Hub."); render(); return; }
+  const sub = st.sub || await st.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(VAPID_PUBLIC) });
+  const j = sub.toJSON();
+  await must(sb.from("push_subscriptions").upsert({ user_id: user.id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, user_agent: navigator.userAgent.slice(0, 200) }, { onConflict: "endpoint" }));
+  toast("Notifications push activées sur cet appareil"); render();
+}
+async function disablePush() {
+  const st = await pushState(); if (!st.ok || !st.sub) return;
+  const ep = st.sub.endpoint; await st.sub.unsubscribe();
+  await must(sb.from("push_subscriptions").delete().eq("endpoint", ep)); toast("Push désactivé sur cet appareil"); render();
+}
+async function testPush() {
+  const { data, error } = await sb.functions.invoke("send-push", { body: { test: true } });
+  if (error) { toast("Test impossible : " + (error.message || "fonction non déployée ?")); return; }
+  toast(data && data.sent ? "Test envoyé : la notification doit arriver dans quelques secondes." : "Aucun appareil enregistré pour ce compte.");
+}
+function pushCard() {
+  const body = el("div", {}, el("div", { class: "muted small" }, "Vérification…"));
+  const card = el("div", { class: "card" }, el("h2", {}, "Notifications push (cet appareil)"), body);
+  pushState().then(st => {
+    body.replaceChildren();
+    if (!st.ok) { body.append(el("div", { class: "muted" }, st.why)); return; }
+    if (st.perm === "denied") { body.append(el("div", { class: "err" }, "Les notifications sont bloquées pour Life-Hub. Autorisez-les dans les réglages de l'appareil.")); return; }
+    if (st.sub) body.append(el("div", { class: "small muted", style: "margin-bottom:8px" }, "Activées sur cet appareil."), el("div", { class: "row" }, el("button", { onclick: testPush }, "Envoyer une notification de test"), el("button", { class: "x", onclick: disablePush }, "Désactiver")));
+    else body.append(el("div", { class: "small muted", style: "margin-bottom:8px" }, "Pas encore activées sur cet appareil."), el("button", { class: "b", onclick: enablePush }, "Activer les notifications push"));
+    body.append(el("div", { class: "small muted", style: "margin-top:8px" }, "Envoi en arrière-plan, appli fermée. Pas de push immédiat entre 22 h et 8 h (heure de Paris) : ils partent à 8 h."));
+  });
+  return card;
+}
+
 /* ---------- Réglages ---------- */
 async function setRule(r, patch) { await must(sb.from("notif_rules").update(patch).eq("key", r.key)); Object.assign(r, patch); render(); }
 function viewSettings() {
@@ -198,10 +242,11 @@ function viewSettings() {
   };
   return [el("h1", {}, "Réglages"), el("div", { class: "sub" }, user.email),
     el("div", { class: "card" }, el("h2", {}, "Règles de notification"), rs.length ? rs : el("div", { class: "muted" }, "Aucune règle."),
-      el("div", { class: "small muted", style: "margin-top:8px" }, "Les modes « résumé » et le push sur téléphone arrivent à l'étape suivante : pour l'instant, le mode « Aucune » ou une règle désactivée arrête bien la création de notifications."),
+      el("div", { class: "small muted", style: "margin-top:8px" }, "Immédiate : push dès que possible (de 8 h à 22 h). Résumés : un seul push vers 8 h (le lundi pour l'hebdomadaire). Aucune ou règle désactivée : rien n'est créé."),
       el("div", { class: "row", style: "margin-top:10px" },
         el("button", { class: "x", onclick: async () => { await must(sb.from("notif_rules").update({ enabled: false }).eq("user_id", user.id)); rules.forEach(r => r.enabled = false); render(); toast("Toutes les règles sont désactivées"); } }, "Tout désactiver"),
         el("button", { onclick: async () => { await must(sb.from("notif_rules").update({ enabled: true, mode: "immediate" }).eq("user_id", user.id)); rules.forEach(r => { r.enabled = true; r.mode = "immediate"; }); await generate(); render(); toast("Préférences réinitialisées"); } }, "Réinitialiser mes préférences"))),
+    pushCard(),
     el("div", { class: "card" }, el("h2", {}, "Sauvegarde"), el("div", { class: "muted small" }, "Vos données sont dans la base Supabase. Cet export copie tâches, notifications, règles et historique des modifications."), el("div", { class: "row", style: "margin-top:8px" }, el("button", { onclick: exp }, "Copier une sauvegarde")), el("div", { id: "bk" })),
     el("div", { class: "card" }, el("button", { onclick: async () => { await sb.auth.signOut(); } }, "Se déconnecter"))];
 }
