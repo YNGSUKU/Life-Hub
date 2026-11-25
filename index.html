@@ -10,9 +10,18 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Life-Hub">
 <meta name="theme-color" content="#14181B">
+<script>try{var __t=localStorage.getItem("lh.theme");if(__t==="rose")document.documentElement.dataset.theme="rose";}catch(e){}</script>
 <style>
 :root{--bg:#EEF0EC;--card:#fff;--text:#14181B;--muted:#5B6468;--line:#D9DDD7;--accent:#0E6E55;--on-accent:#fff;--danger:#C7302A;--signal:#F4C430;--nav:#14181B;--nav-muted:#9AA4A7;--soft:#E3F1EC}
 @media (prefers-color-scheme:dark){:root{--bg:#0F1213;--card:#191E20;--text:#E9ECE7;--muted:#97A1A4;--line:#2A3133;--accent:#3DBB91;--on-accent:#0F1213;--danger:#F06A5F;--soft:#17302A;color-scheme:dark}}
+
+:root[data-theme="rose"]{--bg:#FFF1F5;--card:#FFFFFF;--text:#4A2336;--muted:#9A6B80;--line:#F5D3E0;--accent:#D6336C;--on-accent:#FFFFFF;--danger:#C92A2A;--signal:#FFC2D9;--nav:#7A2E52;--nav-muted:#E8B7CC;--soft:#FFE3EE;color-scheme:light}
+:root[data-theme="rose"] body{font-family:ui-rounded,"SF Pro Rounded",-apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+:root[data-theme="rose"] .card{border-radius:20px;box-shadow:0 4px 14px rgba(214,51,108,.08)}
+:root[data-theme="rose"] button,:root[data-theme="rose"] input,:root[data-theme="rose"] select{border-radius:999px}
+:root[data-theme="rose"] .pill{border-radius:999px}
+:root[data-theme="rose"] h1::after{content:" ✿";color:var(--accent);font-size:.8em}
+:root[data-theme="rose"] .tabs button.on{color:#4A2336}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
 main{max-width:720px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) calc(96px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
@@ -83,7 +92,8 @@ function renderAuth(msg) {
   };
   $("#app").replaceChildren(el("h1", {}, "Life-Hub"), el("div", { class: "sub" }, "Connexion à votre espace personnel"),
     el("div", { class: "card" }, el("div", { class: "row", style: "flex-direction:column;align-items:stretch" }, email, pw,
-      el("div", { class: "row" }, el("button", { class: "b", onclick: () => go("in") }, "Se connecter"), el("button", { onclick: () => go("up") }, "Créer mon compte")), out)));
+      el("div", { class: "row" }, el("button", { class: "b", onclick: () => go("in") }, "Se connecter"), el("button", { onclick: () => go("up") }, "Créer mon compte")),
+      el("button", { style: "border:0;padding:4px 0;color:var(--accent);text-align:left", onclick: async () => { const m = email.value.trim(); if (!m) { out.textContent = "Saisissez d'abord votre e-mail ci-dessus."; return; } const { error } = await sb.auth.resetPasswordForEmail(m, { redirectTo: location.origin + location.pathname }); out.className = error ? "err" : "muted"; out.textContent = error ? error.message : "Si ce compte existe, un e-mail vient d'être envoyé. Ouvrez le lien qu'il contient, puis choisissez un nouveau mot de passe dans Réglages."; } }, "Mot de passe oublié ?"), out)));
 }
 
 /* ---------- Données ---------- */
@@ -227,6 +237,17 @@ function pushCard() {
   return card;
 }
 
+function themeCard() {
+  const cur = (() => { try { return localStorage.getItem("lh.theme") || "auto"; } catch (e) { return "auto"; } })();
+  const set = v => { try { localStorage.setItem("lh.theme", v); } catch (e) {} if (v === "rose") document.documentElement.dataset.theme = "rose"; else delete document.documentElement.dataset.theme; const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = v === "rose" ? "#7A2E52" : "#14181B"; render(); };
+  return el("div", { class: "card" }, el("h2", {}, "Apparence"), el("div", { class: "seg", style: "margin:0" }, el("button", { class: cur === "auto" ? "on" : "", onclick: () => set("auto") }, "Automatique (clair / sombre)"), el("button", { class: cur === "rose" ? "on" : "", onclick: () => set("rose") }, "Rose ✿")));
+}
+
+function passwordCard() {
+  const pw = el("input", { type: "password", placeholder: "Nouveau mot de passe (8 caractères minimum)", autocomplete: "new-password", style: "flex:1;min-width:200px" });
+  return el("div", { class: "card" }, el("h2", {}, "Mot de passe"), el("div", { class: "row" }, pw, el("button", { class: "b", onclick: async () => { if (pw.value.length < 8) { toast("8 caractères minimum."); return; } const { error } = await sb.auth.updateUser({ password: pw.value }); if (error) toast("Erreur : " + error.message); else { pw.value = ""; recovery = false; toast("Mot de passe modifié"); } } }, "Changer")));
+}
+
 /* ---------- Réglages ---------- */
 async function setRule(r, patch) { await must(sb.from("notif_rules").update(patch).eq("key", r.key)); Object.assign(r, patch); render(); }
 function viewSettings() {
@@ -246,7 +267,7 @@ function viewSettings() {
       el("div", { class: "row", style: "margin-top:10px" },
         el("button", { class: "x", onclick: async () => { await must(sb.from("notif_rules").update({ enabled: false }).eq("user_id", user.id)); rules.forEach(r => r.enabled = false); render(); toast("Toutes les règles sont désactivées"); } }, "Tout désactiver"),
         el("button", { onclick: async () => { await must(sb.from("notif_rules").update({ enabled: true, mode: "immediate" }).eq("user_id", user.id)); rules.forEach(r => { r.enabled = true; r.mode = "immediate"; }); await generate(); render(); toast("Préférences réinitialisées"); } }, "Réinitialiser mes préférences"))),
-    pushCard(),
+    passwordCard(), themeCard(), pushCard(),
     el("div", { class: "card" }, el("h2", {}, "Sauvegarde"), el("div", { class: "muted small" }, "Vos données sont dans la base Supabase. Cet export copie tâches, notifications, règles et historique des modifications."), el("div", { class: "row", style: "margin-top:8px" }, el("button", { onclick: exp }, "Copier une sauvegarde")), el("div", { id: "bk" })),
     el("div", { class: "card" }, el("button", { onclick: async () => { await sb.auth.signOut(); } }, "Se déconnecter"))];
 }
@@ -263,13 +284,14 @@ function render() {
 function showAuth(m) { document.querySelector(".tabs")?.remove(); renderAuth(m); }
 
 // Important : ne jamais appeler Supabase directement dans ce rappel (blocage connu de supabase-js) ; on décale le travail.
-sb.auth.onAuthStateChange((ev, session) => { setTimeout(() => onSession(session), 0); });
+let recovery = false;
+sb.auth.onAuthStateChange((ev, session) => { if (ev === "PASSWORD_RECOVERY") recovery = true; setTimeout(() => onSession(session), 0); });
 async function onSession(session) {
   if (!session) { user = null; showAuth(); return; }
   if (user && user.id === session.user.id) return;
   user = session.user; $("#app").replaceChildren(el("div", { class: "muted" }, "Chargement…"));
   const slow = setTimeout(() => { $("#app").replaceChildren(el("div", { class: "err" }, "Le chargement est anormalement long. Vérifiez votre connexion, puis réessayez."), el("button", { onclick: () => location.reload() }, "Réessayer")); }, 15000);
-  try { await loadAll(); clearTimeout(slow); subscribe(); }
+  try { await loadAll(); clearTimeout(slow); subscribe(); if (recovery) { tab = "settings"; render(); toast("Choisissez un nouveau mot de passe ci-dessous."); } }
   catch (e) { clearTimeout(slow); $("#app").replaceChildren(el("div", { class: "err" }, "Impossible de charger les données : " + (e && (e.message || e.details) || e), el("div", { class: "small muted" }, "Si le message parle d'une table introuvable, le schéma SQL n'a pas été exécuté dans Supabase.")), el("button", { onclick: () => location.reload() }, "Réessayer")); }
 }
 let chan = null;
